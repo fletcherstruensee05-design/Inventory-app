@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>My Inventory System</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f4f6;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#111827;color:#fff;padding:18px 16px;position:sticky;top:0;z-index:5}
+header h1{font-size:21px;margin:0} header p{margin:4px 0 0;font-size:13px;opacity:.75}
+main{max-width:720px;margin:auto;padding:14px}
+.card{background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+nav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:14px}
+nav button{border:0;border-radius:10px;padding:12px 5px;background:#fff;font-weight:800;color:#111827}
+nav button.active{background:#111827;color:#fff}
+section{display:none}.active-section{display:block}
+label{display:block;font-size:13px;font-weight:800;margin:12px 0 5px}
+input{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:16px;background:#fff}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button.action{width:100%;border:0;border-radius:11px;padding:13px;margin-top:11px;font-size:15px;font-weight:800}
+.primary{background:#111827;color:#fff}.secondary{background:#e5e7eb;color:#111827}
+.price{font-size:25px;font-weight:900}
+.product{border:1px solid #e5e7eb;border-radius:12px;padding:13px;margin-top:9px}
+.product-name{font-weight:850}.product-price{font-size:20px;font-weight:900;margin-top:5px}
+.muted{font-size:12px;color:#6b7280}.error{color:#b91c1c}.success{color:#166534}
+.stat{font-size:28px;font-weight:900}.small{font-size:13px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+<h1>My Inventory System</h1>
+<p>Inventory • Pricing • Labels</p>
+</header>
+
+<main>
+<div id="loginCard" class="card">
+<h2>Sign In</h2>
+<p class="muted">Use the inventory account you created in Supabase.</p>
+<label>Email</label><input id="email" type="email" autocomplete="email">
+<label>Password</label><input id="password" type="password" autocomplete="current-password">
+<button class="action primary" id="loginBtn">Sign In</button>
+<p id="loginMessage"></p>
+</div>
+
+<div id="app" class="hidden">
+<nav>
+<button class="active" data-tab="dashboard">🏠 Home</button>
+<button data-tab="add">➕ Add</button>
+<button data-tab="inventory">📦 Inventory</button>
+</nav>
+
+<section id="dashboard" class="active-section">
+<div class="card">
+<h2>Dashboard</h2>
+<div class="row">
+<div><div id="productCount" class="stat">0</div><div class="muted">Products</div></div>
+<div><div id="unitCount" class="stat">0</div><div class="muted">Units</div></div>
+</div>
+</div>
+<div class="card">
+<h2>Pricing Rule</h2>
+<p>Suggested price = <b>best competitor price − $2.00</b>.</p>
+<p class="muted">You can add the automatic competitor-search service after the basic app is live.</p>
+</div>
+<button class="action secondary" id="logoutBtn">Sign Out</button>
+</section>
+
+<section id="add">
+<div class="card">
+<h2>Add Product</h2>
+<label>Product Name</label><input id="productName" placeholder="Product name">
+<label>Manufacturer</label><input id="manufacturer" placeholder="Manufacturer">
+<label>Model / Part Number</label><input id="model" placeholder="Model or part number">
+<label>UPC / Barcode</label><input id="upc" inputmode="numeric" placeholder="UPC / barcode">
+<div class="row">
+<div><label>Cost</label><input id="cost" type="number" step="0.01" placeholder="0.00"></div>
+<div><label>Quantity</label><input id="quantity" type="number" min="1" value="1"></div>
+</div>
+<label>Best Competitor Price</label><input id="competitor" type="number" step="0.01" placeholder="0.00">
+<label>Your Suggested Price</label><input id="sellingPrice" class="price" readonly>
+<button class="action primary" id="saveBtn">Save Product</button>
+<button class="action secondary" id="clearBtn">Clear</button>
+<p id="saveMessage"></p>
+</div>
+</section>
+
+<section id="inventory">
+<div class="card">
+<h2>Inventory</h2>
+<input id="search" placeholder="Search name, manufacturer, model or UPC">
+<div id="inventoryList"></div>
+</div>
+</section>
+</div>
+</main>
+
+<script>
+const SUPABASE_URL = "https://nrqhzdodfqrafdrpunmd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_vlw3UlhNZRihxiOugs7Xlw_-BuW49gJ";
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let products = [];
+
+const $ = id => document.getElementById(id);
+
+function escapeHtml(v){
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  }[c]));
+}
+
+function showApp(){
+  $("loginCard").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  loadProducts();
+}
+
+function showLogin(){
+  $("app").classList.add("hidden");
+  $("loginCard").classList.remove("hidden");
+}
+
+async function loadProducts(){
+  const {data,error} = await db.from("products").select("*").order("created_at",{ascending:false});
+  if(error){ console.error(error); return; }
+  products = data || [];
+  renderInventory();
+  $("productCount").textContent = products.length;
+  $("unitCount").textContent = products.reduce((n,p)=>n + Number(p.quantity || 0),0);
+}
+
+function renderInventory(){
+  const q = ($("search").value || "").toLowerCase().trim();
+  const list = products.filter(p =>
+    [p.product_name,p.manufacturer,p.model_number,p.upc].join(" ").toLowerCase().includes(q)
+  );
+  if(!list.length){
+    $("inventoryList").innerHTML = '<p class="muted">No products found.</p>';
+    return;
+  }
+  $("inventoryList").innerHTML = list.map(p =>
+    '<div class="product">' +
+      '<div class="product-name">'+escapeHtml(p.product_name || "Unnamed product")+'</div>' +
+      '<div class="muted">'+escapeHtml(p.manufacturer || "")+' '+escapeHtml(p.model_number || "")+'</div>' +
+      '<div class="product-price">$'+Number(p.selling_price || 0).toFixed(2)+'</div>' +
+      '<div class="muted">UPC: '+escapeHtml(p.upc || "—")+' • Qty: '+Number(p.quantity || 0)+'</div>' +
+    '</div>'
+  ).join("");
+}
+
+function clearForm(){
+  ["productName","manufacturer","model","upc","cost","competitor","sellingPrice"].forEach(id => $(id).value = "");
+  $("quantity").value = "1";
+}
+
+$("competitor").addEventListener("input", () => {
+  const c = Number($("competitor").value);
+  $("sellingPrice").value = c ? Math.max(0,c-2).toFixed(2) : "";
+});
+
+$("search").addEventListener("input", renderInventory);
+
+$("loginBtn").addEventListener("click", async () => {
+  const {error} = await db.auth.signInWithPassword({
+    email: $("email").value.trim(),
+    password: $("password").value
+  });
+  if(error){ $("loginMessage").className="error"; $("loginMessage").textContent=error.message; return; }
+  $("loginMessage").textContent="";
+  showApp();
+});
+
+$("logoutBtn").addEventListener("click", async () => {
+  await db.auth.signOut();
+  showLogin();
+});
+
+$("clearBtn").addEventListener("click", clearForm);
+
+$("saveBtn").addEventListener("click", async () => {
+  const {data:{user}} = await db.auth.getUser();
+  if(!user){ showLogin(); return; }
+
+  const name = $("productName").value.trim();
+  if(!name){ $("saveMessage").className="error"; $("saveMessage").textContent="Enter a product name."; return; }
+
+  const competitor = Number($("competitor").value);
+  const product = {
+    product_name:name,
+    manufacturer:$("manufacturer").value.trim(),
+    model_number:$("model").value.trim(),
+    upc:$("upc").value.trim(),
+    cost:Number($("cost").value) || null,
+    competitor_price:competitor || null,
+    selling_price:competitor ? Math.max(0,competitor-2) : null,
+    quantity:Number($("quantity").value) || 1,
+    user_id:user.id
+  };
+
+  const {error} = await db.from("products").insert(product);
+  if(error){ $("saveMessage").className="error"; $("saveMessage").textContent=error.message; return; }
+
+  $("saveMessage").className="success";
+  $("saveMessage").textContent="Product saved.";
+  clearForm();
+  await loadProducts();
+});
+
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll("section").forEach(s => s.classList.remove("active-section"));
+    btn.classList.add("active");
+    $(btn.dataset.tab).classList.add("active-section");
+    if(btn.dataset.tab === "inventory") renderInventory();
+  });
+});
+
+(async function(){
+  const {data:{session}} = await db.auth.getSession();
+  if(session) showApp();
+})();
+</script>
+</body>
+</html>
